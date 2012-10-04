@@ -103,7 +103,7 @@ def path_filter(extensions=None, exclude_paths=[]):
   return the_filter
 
 _default_path_filter = path_filter(
-  extensions=['php', 'phpt', 'js', 'css', 'rb', 'erb']
+  extensions=['php', 'phpt', 'js', 'css', 'rb', 'erb', 'hh', 'h', 'c', 'cxx']
 )
 
 def run_interactive(query, editor=None, just_count=False):
