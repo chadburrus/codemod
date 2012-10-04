@@ -560,7 +560,7 @@ def print_patch(patch, lines_to_print, file_lines=None):
 
 def _ask_about_patch(patch, editor):
   terminal_clear()
-  terminal_print('%s\n' % patch.render_range(), color='WHITE')
+  terminal_print('%s\n' % patch.render_range(), color='BLUE')
   print
 
   lines = list(open(patch.path))
