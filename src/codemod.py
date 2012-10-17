@@ -103,7 +103,7 @@ def path_filter(extensions=None, exclude_paths=[]):
   return the_filter
 
 _default_path_filter = path_filter(
-  extensions=['php', 'phpt', 'js', 'css', 'rb', 'erb', 'twig']
+  extensions=['php', 'phpt', 'js', 'css', 'rb', 'erb', 'hh', 'h', 'c', 'cxx', 'twig']
 )
 
 def run_interactive(query, editor=None, just_count=False):
@@ -560,7 +560,7 @@ def print_patch(patch, lines_to_print, file_lines=None):
 
 def _ask_about_patch(patch, editor):
   terminal_clear()
-  terminal_print('%s\n' % patch.render_range(), color='WHITE')
+  terminal_print('%s\n' % patch.render_range(), color='BLUE')
   print
 
   lines = list(open(patch.path))
