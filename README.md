@@ -72,6 +72,16 @@ So, while at Facebook, I wrote a script that does exactly that. codemod.py a nif
 
 It's one of those tools where, the more you use it, the more you think of places to use it -- and the more you realize how much you were compromising the quality of your code because reconsidering heavily-used code patterns sounded just too damn annoying. I use it pretty much every day.
 
+Tips and Tricks
+---------------
+
+1.  Be sure to escape shell-level characters correctly.  Especially with queries that begin with hyphens--they can cause codemod to break inexplicably.  For example, this won't work:
+
+        codemod.py -m '->(\s+)([a-zA-Z])' '\1->\2'
+
+    As the hyphen in the query is interpreted as a shell argument, which breaks the rest of the option parsing.  Escape it with a backslash ("\") instead:
+
+        codemod.py -m '\->(\s+)([a-zA-Z])' '\1->\2'
 
 Credits
 -------
