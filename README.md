@@ -14,6 +14,10 @@ Example: Let's say you're deprecating your use of the `<font>` tag.  From the co
 
 For each match of the regex, you'll be shown a colored diff, and asked if you want to accept the change (the replacement of the `<font>` tag with a `<span>` tag), reject it, or edit the line in question in your `$EDITOR` of choice.
 
+Install
+-------
+`pip install git+https://github.com/facebook/codemod.git`
+
 Usage
 -----
 
@@ -82,6 +86,11 @@ Tips and Tricks
     As the hyphen in the query is interpreted as a shell argument, which breaks the rest of the option parsing.  Escape it with a backslash ("\") instead:
 
         codemod.py -m '\->(\s+)([a-zA-Z])' '\1->\2'
+
+Dependencies
+------------
+
+* python2
 
 Credits
 -------
