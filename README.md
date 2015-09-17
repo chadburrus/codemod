@@ -1,6 +1,9 @@
 codemod
 =======
 
+[![Build
+Status](https://travis-ci.org/facebook/codemod.svg?branch=master)](https://travis-ci.org/facebook/codemod)
+
 Overview
 --------
 
@@ -30,6 +33,8 @@ Options (all optional) include:
       default, codemod applies the regex one line at a time.
     -d
       The path whose ancestor files are to be explored.  Defaults to current dir.
+    -i
+      Make your search case-insensitive
     --start
       A path:line_number-formatted position somewhere in the hierarchy from which
       to being exploring, or a percentage (e.g. "--start 25%") of the way through
@@ -41,6 +46,13 @@ Options (all optional) include:
       through, just before which to end.
     --extensions
       A comma-delimited list of file extensions to process.
+    --include-extensionless
+      If set, this will check files without an extension, along with any
+      matching file extensions passed in --extensions
+    --accept-all
+      Automatically accept all changes (use with caution)
+    --default-no
+      Set default behavior to reject the change.
     --editor
       Specify an editor, e.g. "vim" or "emacs".  If omitted, defaults to $EDITOR
       environment variable.

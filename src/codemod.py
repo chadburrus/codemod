@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # Copyright (c) 2007-2008 Facebook
 #
@@ -18,68 +18,48 @@
 #
 # @author Justin Rosenstein
 
-r"""
-codemod.py is a tool/library to assist you with large-scale codebase refactors
-that can be partially automated but still require human oversight and
-occassional intervention.
 
-Example: Let's say you're deprecating your use of the <font> tag.  From the
-command line, you might make progress by running:
+import argparse, os, re, sys, textwrap
 
-  codemod.py -m -d /home/jrosenstein/www --extensions php,html \
-             '<font *color="?(.*?)"?>(.*?)</font>' \
-             '<span style="color: \1;">\2</span>'
+def is_extensionless(path):
+  """
+  Returns True if path has no extension.
 
-For each match of the regex, you'll be shown a colored diff, and asked if you
-want to accept the change (the replacement of the <font> tag with a <span>
-tag), reject it, or edit the line in question in your $EDITOR of choice.
+  >>> is_extensionless("./www/test")
+  True
+  >>> is_extensionless("./www/.profile")
+  True
+  >>> is_extensionless("./www/.dir/README")
+  True
+  >>> is_extensionless("./scripts/menu.js")
+  False
+  >>> is_extensionless("./LICENSE")
+  True
+  """
+  _, ext = os.path.splitext(path)
+  return ext == ''
 
-Usage: last two arguments are a regular expression to match and a substitution
-       string, respectively.  Or you can omit the substitution string, and just
-       be prompted on each match for whether you want to edit in your editor.
+def matches_extension(path, extension):
+  """
+  Returns True if path has the given extension, or if
+  the last path component matches the extension.
 
-Options (all optional) include:
-
-  -m
-    Have regex work over multiple lines (e.g. have dot match newlines).  By
-    default, codemod applies the regex one line at a time.
-  -d
-    The path whose ancestor files are to be explored.  Defaults to current dir.
-  --start
-    A path:line_number-formatted position somewhere in the hierarchy from which
-    to being exploring, or a percentage (e.g. "--start 25%") of the way through
-    to start.  Useful if you're divvying up the substitution task across
-    multiple people.
-  --end
-    A path:line_number-formatted position somewhere in the hierarchy just
-    *before* which we should stop exploring, or a percentage of the way
-    through, just before which to end.
-  --extensions
-    A comma-delimited list of file extensions to process.
-  --editor
-    Specify an editor, e.g. "vim" or "emacs".  If omitted, defaults to $EDITOR
-    environment variable.
-  --count
-    Don't run normally.  Instead, just print out number of times places in the
-    codebase where the 'query' matches.
-  --test
-    Don't run normally.  Instead, just run the unit tests embedded in the
-    codemod library.
-
-You can also use codemod for transformations that are much more sophisticated
-than regular expression substitution.  Rather than using the command line, you
-write Python code that looks like:
-
-  import codemod
-  codemod.Query(...).run_interactive()
-
-See the documentation for the Query class for details.
-
-@author Justin Rosenstein
-"""
-
-
-import sys, os
+  >>> matches_extension("./www/profile.php", "php")
+  True
+  >>> matches_extension("./scripts/menu.js", "html")
+  False
+  >>> matches_extension("./LICENSE", "LICENSE")
+  True
+  """
+  _, ext = os.path.splitext(path)
+  if ext == '':
+    # If there is no extension, grab the file name and
+    # compare it to the given extension.
+    return os.path.basename(path) == extension
+  else:
+    # If the is an extension, drop the leading period and
+    # compare it to the extension.
+    return ext[1:] == extension
 
 def path_filter(extensions=None, exclude_paths=[]):
   """
@@ -91,14 +71,17 @@ def path_filter(extensions=None, exclude_paths=[]):
   [True, False]
   >>> map(path_filter(exclude_paths=['html']), ['./html/x.php', './lib/y.js'])
   [False, True]
+  >>> map(path_filter(extensions=['js', 'BUILD']), ['./a.js', './BUILD', './profile.php'])
+  [True, True, False]
   """
   def the_filter(path):
     if extensions:
-      if not any(path.endswith('.' + extension) for extension in extensions):
+      if not any(matches_extension(path, extension) for extension in extensions):
         return False
-    for excluded in exclude_paths:
-      if path.startswith(excluded) or path.startswith('./' + excluded):
-        return False
+    if exclude_paths:
+      for excluded in exclude_paths:
+        if path.startswith(excluded) or path.startswith('./' + excluded):
+          return False
     return True
   return the_filter
 
@@ -106,7 +89,7 @@ _default_path_filter = path_filter(
   extensions=['php', 'phpt', 'js', 'css', 'rb', 'erb', 'hh', 'h', 'c', 'cxx', 'twig', 'sql', 'xml']
 )
 
-def run_interactive(query, editor=None, just_count=False):
+def run_interactive(query, editor=None, just_count=False, default_no=False):
   """
   Asks the user about each patch suggested by the result of the query.
 
@@ -117,6 +100,8 @@ def run_interactive(query, editor=None, just_count=False):
   @param just_count   If true: don't run normally.  Just print out number of
                       places in the codebase where the query matches.
   """
+
+  global yes_to_all
 
   # Load start from bookmark, if appropriate.
   bookmark = _load_bookmark()
@@ -140,9 +125,15 @@ def run_interactive(query, editor=None, just_count=False):
 
   for patch in suggestions:
     _save_bookmark(patch.start_position)
-    _ask_about_patch(patch, editor)
+    _ask_about_patch(patch, editor, default_no)
     print 'Searching...'
   _delete_bookmark()
+  if yes_to_all:
+    terminal_clear()
+    print "You MUST indicate in your code review: \"codemod with 'Yes to all'\".\
+ Make sure you and other people review the changes.\n\nWith great power, comes \
+great responsibility."
+
 
 def line_transformation_suggestor(line_transformation, line_filter=None):
   """
@@ -171,10 +162,13 @@ def line_transformation_suggestor(line_transformation, line_filter=None):
         yield Patch(line_number, new_lines=[candidate])
   return suggestor
 
-def regex_suggestor(regex, substitution=None, line_filter=None):
+def regex_suggestor(regex, substitution=None, ignore_case=False, line_filter=None):
   if isinstance(regex, str):
     import re
-    regex = re.compile(regex)
+    if ignore_case is False:
+      regex = re.compile(regex)
+    else:
+      regex = re.compile(regex, re.IGNORECASE)
 
   if substitution is None:
     line_transformation = lambda line: None if regex.search(line) else line
@@ -182,7 +176,7 @@ def regex_suggestor(regex, substitution=None, line_filter=None):
     line_transformation = lambda line: regex.sub(substitution, line)
   return line_transformation_suggestor(line_transformation, line_filter)
 
-def multiline_regex_suggestor(regex, substitution=None):
+def multiline_regex_suggestor(regex, substitution=None, ignore_case=False):
   """
   Return a suggestor function which, given a list of lines, generates patches
   to substitute matches of the given regex with (if provided) the given
@@ -196,7 +190,10 @@ def multiline_regex_suggestor(regex, substitution=None):
   """
   import re
   if isinstance(regex, str):
-    regex = re.compile(regex, re.DOTALL)
+    if ignore_case is False:
+      regex = re.compile(regex, re.DOTALL)
+    else:
+      regex = re.compile(regex, re.DOTALL | re.IGNORECASE)
 
   if isinstance(substitution, str):
     substitution_func = lambda match: match.expand(substitution)
@@ -267,7 +264,8 @@ class Query:
                start=None,
                end=None,
                root_directory='.',
-               path_filter=_default_path_filter):
+               path_filter=_default_path_filter,
+               inc_extensionless=False):
     """
     @param suggestor            A function that takes a list of lines and
                                 generates instances of Patch to suggest.
@@ -289,12 +287,15 @@ class Query:
     @param root_directory       The path whose ancestor files are to be explored.
     @param path_filter          Given a path, returns True or False.  If False,
                                 the entire file is ignored.
+    @param inc_extensionless    If True, will include all files without an
+                                extension when checking against the path_filter
     """
     self.suggestor          = suggestor
     self._start             = start
     self._end               = end
     self.root_directory     = root_directory
     self.path_filter        = path_filter
+    self.inc_extensionless  = inc_extensionless
     self._all_patches_cache = None
 
   def clone(self):
@@ -359,11 +360,17 @@ class Query:
     path_list = Query._walk_directory(self.root_directory)
     path_list = Query._sublist(path_list, start_pos.path, end_pos.path)
     path_list = (path for path in path_list if
-                 Query._path_looks_like_code(path) and self.path_filter(path))
-
+                 Query._path_looks_like_code(path)
+                  and (self.path_filter(path))
+                  or (self.inc_extensionless and is_extensionless(path)))
     for path in path_list:
+      try:
+        lines = list(open(path))
+      except IOError:
+        # If we can't open the file--perhaps it's a symlink whose
+        # destination no loner exists--then short-circuit.
+        continue
 
-      lines = list(open(path))
       for patch in self.suggestor(lines):
         if path == start_pos.path:
           if patch.start_line_number < start_pos.line_number:
@@ -424,7 +431,6 @@ class Query:
     return ('/.' not in path and path[-1] != '~'
             and not path.endswith('tags')
             and not path.endswith('TAGS'))
-
 
 class Position:
   """
@@ -557,8 +563,10 @@ def print_patch(patch, lines_to_print, file_lines=None):
   for i in xrange(patch.end_line_number, end_context_line_number):
     print_file_line(i)
 
-
-def _ask_about_patch(patch, editor):
+yes_to_all = False
+def _ask_about_patch(patch, editor, default_no):
+  global yes_to_all
+  default_action = 'n' if default_no else 'y'
   terminal_clear()
   terminal_print('%s\n' % patch.render_range(), color='BLUE')
   print
@@ -569,18 +577,28 @@ def _ask_about_patch(patch, editor):
   print
 
   if patch.new_lines is not None:
-    print 'Accept change (y = yes [default], n = no, e = edit, E = yes+edit)? ',
-    p = _prompt('yneE', default='y')
+    if not yes_to_all:
+      if default_no:
+        print ('Accept change (y = yes, n = no [default], e = edit, ' +
+               'A = yes to all, E = yes+edit)? '),
+      else:
+        print ('Accept change (y = yes [default], n = no, e = edit, ' +
+               'A = yes to all, E = yes+edit)? '),
+      p = _prompt('yneEA', default=default_action)
+    else:
+      p = 'y'
   else:
     print '(e = edit [default], n = skip line)? ',
     p = _prompt('en', default='e')
 
+  if p in 'A':
+    yes_to_all = True
+    p = 'y'
   if p in 'yE':
     patch.apply_to(lines)
     _save(patch.path, lines)
   if p in 'eE':
     run_editor(patch.start_position, editor)
-
 
 def _prompt(letters='yn', default=None):
   """
@@ -728,70 +746,126 @@ def _terminal_restore_color():
   import curses, sys
   sys.stdout.write(curses.tigetstr('sgr0'))
 
-def print_through_less(text):
-  """
-  Prints `text` to standard output.  If `text` wouldn't fit on one screen (as
-  measured by line count), make output scrollable a la `less`.
-  """
-  from tempfile import NamedTemporaryFile
-  tempfile = NamedTemporaryFile()
-  tempfile.write(text)
-  tempfile.flush()
-  os.system('less --quit-if-one-screen %s' % tempfile.name)
-
-
 #
 # Code to make this run as an executable from the command line.
 #
 
-class _UsageException(Exception): pass
-
 def _parse_command_line():
-  import getopt, sys, re
-  try:
-    opts, remaining_args = getopt.gnu_getopt(
-        sys.argv[1:], 'md:',
-        ['start=', 'end=', 'extensions=', 'editor=', 'count', 'test'])
-  except getopt.error:
-    raise _UsageException()
-  opts = dict(opts)
+  global yes_to_all
 
-  if '--test' in opts:
+  parser = argparse.ArgumentParser(
+          formatter_class=argparse.RawDescriptionHelpFormatter,
+          description=textwrap.dedent(r"""
+            codemod.py is a tool/library to assist you with large-scale codebase refactors
+            that can be partially automated but still require human oversight and
+            occassional intervention.
+
+            Example: Let's say you're deprecating your use of the <font> tag.  From the
+            command line, you might make progress by running:
+
+              codemod.py -m -d /home/jrosenstein/www --extensions php,html \
+                         '<font *color="?(.*?)"?>(.*?)</font>' \
+                         '<span style="color: \1;">\2</span>'
+
+            For each match of the regex, you'll be shown a colored diff, and asked if you
+            want to accept the change (the replacement of the <font> tag with a <span>
+            tag), reject it, or edit the line in question in your $EDITOR of choice.
+            """),
+          epilog=textwrap.dedent(r"""
+            You can also use codemod for transformations that are much more sophisticated
+            than regular expression substitution.  Rather than using the command line, you
+            write Python code that looks like:
+
+              import codemod
+              codemod.Query(...).run_interactive()
+
+            See the documentation for the Query class for details.
+
+            @author Justin Rosenstein
+            """)
+          )
+
+  parser.add_argument('-m', action='store_true',
+                      help='Have regex work over multiple lines (e.g. have dot match newlines). '
+                           'By default, codemod applies the regex one line at a time.')
+  parser.add_argument('-d', action='store', type=str, default='.',
+                      help='The path whose descendent files are to be explored. '
+                           'Defaults to current dir.')
+  parser.add_argument('-i', action='store_true',
+                      help='Perform case-insensitive search.')
+
+  parser.add_argument('--start', action='store', type=str,
+                      help='A path:line_number-formatted position somewhere in the hierarchy from which to being exploring, '
+                           'or a percentage (e.g. "--start 25%%") of the way through to start.'
+                           'Useful if you\'re divvying up the substitution task across multiple people.')
+  parser.add_argument('--end', action='store', type=str,
+                      help='A path:line_number-formatted position somewhere in the hierarchy just *before* which we should stop exploring, '
+                           'or a percentage of the way through, just before which to end.')
+
+  parser.add_argument('--extensions', action='store', type=str,
+                      help='A comma-delimited list of file extensions to process.')
+  parser.add_argument('--include-extensionless', action='store_true',
+                      help='If set, this will check files without an extension, along with any matching file extensions passed in --extensions')
+  parser.add_argument('--exclude-paths', action='store', type=str,
+                      help='A comma-delimited list of paths to exclude.')
+
+  parser.add_argument('--accept-all', action='store_true',
+                      help='Automatically accept all changes (use with caution).')
+
+  parser.add_argument('--default-no', action='store_true',
+                      help='If set, this will make the default option to not accept the change.')
+
+  parser.add_argument('--editor', action='store', type=str,
+                      help='Specify an editor, e.g. "vim" or emacs". '
+                            'If omitted, defaults to $EDITOR environment variable.')
+  parser.add_argument('--count', action='store_true',
+                      help='Don\'t run normally.  Instead, just print out number of times places in the codebase where the \'query\' matches.')
+  parser.add_argument('--test', action='store_true',
+                      help='Don\'t run normally.  Instead, just run the unit tests embedded in the codemod library.')
+
+  parser.add_argument('match', nargs='?', action='store', type=str,
+                      help='Regular expression to match.')
+  parser.add_argument('subst', nargs='?', action='store', type=str,
+                      help='Substitution to replace with.')
+
+  arguments = parser.parse_args()
+
+  if arguments.test:
     import doctest
     doctest.testmod()
     sys.exit(0)
 
+  if (arguments.extensions == None) and (arguments.include_extensionless == False):
+    parser.print_usage()
+    sys.exit(0)
+
+  yes_to_all = arguments.accept_all
+
   query_options = {}
-  if len(remaining_args) in [1, 2]:
-    query_options['suggestor'] = (
-     (multiline_regex_suggestor if '-m' in opts else regex_suggestor)
-     (*remaining_args)  # remaining_args is [regex] or [regex, substitution].
-    )
-  else:
-    raise _UsageException()
-  if '--start' in opts:
-    query_options['start'] = opts['--start']
-  if '--end' in opts:
-    query_options['end'] = opts['--end']
-  if '-d' in opts:
-    query_options['root_directory'] = opts['-d']
-  if '--extensions' in opts:
+
+  query_options['suggestor'] = (multiline_regex_suggestor if arguments.m else regex_suggestor
+          )(arguments.match, arguments.subst, arguments.i)
+
+  query_options['start'] = arguments.start
+  query_options['end'] = arguments.end
+  query_options['root_directory'] = arguments.d
+
+  if arguments.extensions is not None or arguments.exclude_paths is not None:
     query_options['path_filter'] = (
-        path_filter(extensions=opts['--extensions'].split(',')))
+        path_filter(extensions=arguments.extensions.split(',') \
+                    if arguments.extensions is not None else None,
+                    exclude_paths=arguments.exclude_paths.split(',') \
+                    if arguments.exclude_paths is not None else None))
 
   options = {}
   options['query'] = Query(**query_options)
-  if '--editor' in opts:
-    options['editor'] = opts['--editor']
-  if '--count' in opts:
-    options['just_count'] = True
+  if arguments.editor is not None:
+    options['editor'] = arguments.editor
+  options['just_count'] = arguments.count
+  options['default_no'] = arguments.default_no
 
   return options
 
 if __name__ == '__main__':
-  try:
-    options = _parse_command_line()
-  except _UsageException:
-    print_through_less(__doc__.strip())
-    sys.exit(2)
+  options = _parse_command_line()
   run_interactive(**options)
